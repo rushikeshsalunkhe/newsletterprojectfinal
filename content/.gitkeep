@@ -1,0 +1,2 @@
+# This directory stores scraped content
+# The scraper will create daily_tip.txt here when it runs

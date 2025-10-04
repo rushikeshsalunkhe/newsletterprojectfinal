@@ -1,0 +1,91 @@
+name: Send Daily Newsletter
+
+on:
+  # Run daily at 6 AM UTC
+  schedule:
+    - cron: '0 6 * * *'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  send-newsletter:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          npm install
+          pip install pandas requests beautifulsoup4 sendgrid
+      
+      - name: Check for Admin Tip
+        id: admin-tip
+        run: |
+          TODAY=$(date +%Y-%m-%d)
+          echo "Checking for admin tip for $TODAY"
+          
+          # Run the admin tip checker
+          ADMIN_TIP=$(node scripts/get-admin-tip.js $TODAY || echo "")
+          
+          if [ -n "$ADMIN_TIP" ]; then
+            echo "✅ Admin tip found! Using admin content, skipping scraper."
+            echo "tip_content=$ADMIN_TIP" >> $GITHUB_OUTPUT
+            echo "tip_source=admin" >> $GITHUB_OUTPUT
+          else
+            echo "ℹ️ No admin tip found. Will run web scraper."
+            echo "tip_source=scraper" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Run Web Scraper (if needed)
+        if: steps.admin-tip.outputs.tip_source == 'scraper'
+        run: |
+          echo "🕷️ Running web scraper to fetch daily tip..."
+          python scripts/scrape_tips.py
+          
+          # Read the scraped tip
+          SCRAPED_TIP=$(cat content/daily_tip.txt)
+          echo "tip_content=$SCRAPED_TIP" >> $GITHUB_OUTPUT
+      
+      - name: Download Subscriber List
+        run: |
+          # Option 1: If you're using CSV sync from Google Sheets
+          # The subscribers.csv should already be in your repo from the sync
+          
+          # Option 2: Or download from a URL
+          # curl -o subscribers.csv "YOUR_GOOGLE_SHEETS_CSV_EXPORT_URL"
+          
+          echo "✅ Subscriber list ready"
+      
+      - name: Send Newsletter Emails
+        env:
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+          TIP_CONTENT: ${{ steps.admin-tip.outputs.tip_content }}
+          TIP_SOURCE: ${{ steps.admin-tip.outputs.tip_source }}
+        run: |
+          echo "📧 Sending newsletter to subscribers..."
+          echo "Tip source: $TIP_SOURCE"
+          python scripts/send_newsletter.py
+      
+      - name: Update Activity Log
+        run: |
+          echo "📝 Newsletter sent successfully on $(date)"
+          # You could commit logs back to the repo or send to a logging service
+      
+      - name: Notify on Failure
+        if: failure()
+        run: |
+          echo "❌ Newsletter workflow failed!"
+          # Add notification logic here (email, Slack, etc.)
